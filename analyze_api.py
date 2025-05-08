@@ -1,74 +1,60 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
+from ultralytics import YOLO
 import cv2
 import numpy as np
 import time
+import os
 
 app = FastAPI()
 
-# 顔検出器の読み込み
-cascade = cv2.CascadeClassifier("cascades/haarcascade_frontalface_default.xml")
+model = YOLO("yolov8n.pt")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # 開発中は * でOK
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
+os.makedirs("captured", exist_ok=True)
+
 @app.post("/analyze")
-def analyze_face_color():
-    cap = cv2.VideoCapture(0)
+async def analyze_face(file: UploadFile = File(...)):
+    contents = await file.read()
+    np_arr = np.frombuffer(contents, np.uint8)
+    frame = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
 
-    if not cap.isOpened():
-        return {"status": "error", "message": "カメラを開けませんでした"}
+    if frame is None:
+        return {"status": "error", "message": "画像の読み込みに失敗しました"}
 
-    # 連続でフレームを読み込んでから使う（最初の数フレームは不安定）
-    for _ in range(5):
-        ret, frame = cap.read()
-    cap.release()
-
-    if not ret:
-        return {"status": "error", "message": "画像取得失敗"}
-
-    # ファイル名をタイムスタンプで一意に
+    # ファイル保存（任意）
     timestamp = int(time.time() * 1000)
     filename = f"captured_{timestamp}.jpg"
-    filepath = f"captured/{filename}"  # 保存先フォルダ
-
-    # 保存
+    filepath = f"captured/{filename}"
     cv2.imwrite(filepath, frame)
 
-    # 顔検出
-    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-    faces = cascade.detectMultiScale(
-        gray,
-        scaleFactor=1.1,
-        minNeighbors=4,
-        minSize=(60, 60)
-    )
+    # YOLO推論
+    results = model(frame)[0]
 
-    if len(faces) == 0:
-        return {"status": "error", "message": "顔が見つかりませんでした"}
-
-    # 顔の赤み評価
-    (x, y, w, h) = faces[0]
-    face_roi = frame[y:y + h, x:x + w]
-    avg_color = np.mean(face_roi, axis=(0, 1))
-    r = avg_color[2]
-    face_status = "良い" if r > 120 else "普通" if r > 90 else "悪い"
+    # 検出された "person" クラスがあるかどうか確認
+    detected = False
+    for box in results.boxes:
+        cls_id = int(box.cls[0])
+        label = model.names[cls_id]
+        if label == "person":
+            detected = True
+            break
 
     return {
         "status": "success",
         "result": {
-            "color_score": int(r),
-            "face_condition": face_status,
-            "image_url": f"http://localhost:5000/image/{filename}"
+            "face_detected": detected,
+            "image_url": f"http://localhost:8000/image/{filename}"
         }
     }
-
 
 @app.get("/image/{filename}")
 def get_image(filename: str):
