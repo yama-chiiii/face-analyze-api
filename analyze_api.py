@@ -9,7 +9,7 @@ import os
 
 app = FastAPI()
 
-model = YOLO("yolov8n.pt")
+model = YOLO("face_yolov8n.pt")
 
 app.add_middleware(
     CORSMiddleware,
@@ -30,28 +30,30 @@ async def analyze_face(file: UploadFile = File(...)):
     if frame is None:
         return {"status": "error", "message": "画像の読み込みに失敗しました"}
 
-    # ファイル保存（任意）
     timestamp = int(time.time() * 1000)
     filename = f"captured_{timestamp}.jpg"
     filepath = f"captured/{filename}"
     cv2.imwrite(filepath, frame)
 
-    # YOLO推論
     results = model(frame)[0]
 
-    # 検出された "person" クラスがあるかどうか確認
-    detected = False
+    detections = []
     for box in results.boxes:
         cls_id = int(box.cls[0])
         label = model.names[cls_id]
-        if label == "person":
-            detected = True
-            break
+        if label == "face":
+            x1, y1, x2, y2 = map(int, box.xyxy[0])
+            conf = float(box.conf[0])
+            detections.append({
+                "label": label,
+                "confidence": conf,
+                "box": [x1, y1, x2, y2]
+            })
 
     return {
         "status": "success",
         "result": {
-            "face_detected": detected,
+            "detections": detections,
             "image_url": f"http://localhost:8000/image/{filename}"
         }
     }
