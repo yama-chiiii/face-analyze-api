@@ -62,7 +62,7 @@ async def analyze_face(file: UploadFile = File(...)):
         "status": "success",
         "result": {
             "detections": detections,
-            "image_url": f"http://localhost:8000/image/{filename}"
+            "image_url": f"/image/{filename}"
         }
     }
 
